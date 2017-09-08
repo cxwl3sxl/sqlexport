@@ -15,6 +15,7 @@ namespace SqlExport
 {
     class Program
     {
+        static int tableCount = 0, procCount = 0, viewCount = 0, funcCount = 0;
         static void Main(string[] args)
         {
             AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
@@ -75,6 +76,7 @@ namespace SqlExport
                 using (TimeUse tu = new TimeUse("数据库结构创建导出"))
                 {
                     WriteSchemaInfo(ca, sw);
+                    Console.WriteLine("数据结构导出完毕，共计{4}个(表：{0} 存储过程：{1} 视图：{2} 用户函数：{3})", tableCount, procCount, viewCount, funcCount, tableCount + procCount + viewCount + funcCount);
                 }
                 using (TimeUse tu = new TimeUse("基础数据导出"))
                 {
@@ -125,6 +127,8 @@ namespace SqlExport
             var conn = new ServerConnection(ca.Server, ca.UserName, ca.Password);
             var svr = new Server(conn);
             var db = svr.Databases[ca.DataBase];
+
+            Console.WriteLine("正在生成表结构...");
             foreach (Table tb in db.Tables)
             {
                 if (tb.IsSystemObject)
@@ -180,7 +184,12 @@ namespace SqlExport
                         }
                     }
                 }
+
+                tableCount++;
             }
+            Console.WriteLine("表导出完成，共{0}个", tableCount);
+
+            Console.WriteLine("正在生成视图...");
             foreach (View tb in db.Views)
             {
                 if (tb.IsSystemObject)
@@ -194,7 +203,12 @@ namespace SqlExport
                     sw.WriteLine(a);
                     sw.WriteLine("GO");
                 }
+
+                viewCount++;
             }
+            Console.WriteLine("视图导出完成，共{0}个", viewCount);
+
+            Console.WriteLine("正在生成存储过程...");
             foreach (StoredProcedure tb in db.StoredProcedures)
             {
                 if (tb.IsSystemObject)
@@ -208,7 +222,12 @@ namespace SqlExport
                     sw.WriteLine(a);
                     sw.WriteLine("GO");
                 }
+
+                procCount++;
             }
+            Console.WriteLine("存储过程导出完成，共{0}个", procCount);
+
+            Console.WriteLine("正在生成自定义函数...");
             foreach (UserDefinedFunction tb in db.UserDefinedFunctions)
             {
                 if (tb.IsSystemObject)
@@ -222,7 +241,10 @@ namespace SqlExport
                     sw.WriteLine(a);
                     sw.WriteLine("GO");
                 }
+
+                funcCount++;
             }
+            Console.WriteLine("自定义函数导出完成，共{0}个", funcCount);
         }
 
         static void CheckAgrument(string arg, string message)
@@ -242,13 +264,14 @@ namespace SqlExport
             {
                 foreach (string table in ca.BaseTables)
                 {
-                    Console.WriteLine("正在导出表：" + table);
-                    ExportTable(conn, sw, table);
+                    Console.Write("正在导出表：" + table + "...");
+                    int count = ExportTable(conn, sw, table);
+                    Console.WriteLine("共{0}条记录", count);
                 }
             }
         }
 
-        static void ExportTable(SqlConnection conn, StreamWriter sw, string tableName)
+        static int ExportTable(SqlConnection conn, StreamWriter sw, string tableName)
         {
             if (conn.State != ConnectionState.Open)
                 conn.Open();
@@ -264,10 +287,10 @@ namespace SqlExport
             {
                 columns.Add("[" + col.ColumnName + "]");
             }
-            ExportTableData(sql, columns, tableName, conn, sw);
+            return ExportTableData(sql, columns, tableName, conn, sw);
         }
 
-        static void ExportTableData(string sql, List<string> cols, string tableName, SqlConnection conn, StreamWriter sw)
+        static int ExportTableData(string sql, List<string> cols, string tableName, SqlConnection conn, StreamWriter sw)
         {
             if (conn.State != ConnectionState.Open)
                 conn.Open();
@@ -275,8 +298,10 @@ namespace SqlExport
             var reader = cmd.ExecuteReader();
             List<string> select = new List<string>();
             int batch = 1;
+            int dataCount = 0;
             while (reader.Read())
             {
+                dataCount++;
                 List<string> colData = new List<string>();
                 foreach (var col in cols)
                 {
@@ -305,6 +330,7 @@ namespace SqlExport
             reader.Close();
             reader.Dispose();
             cmd.Dispose();
+            return dataCount;
         }
 
         static void WriteInsertBacth(string tableName, List<string> cols, int batch, List<string> select, StreamWriter sw)
