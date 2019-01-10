@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using Microsoft.SqlServer.Management.Smo;
 using Microsoft.SqlServer.Management.Common;
@@ -9,6 +8,7 @@ using System.Data.SqlClient;
 using System.Data;
 using System.Reflection;
 using System.Diagnostics;
+using System.Linq;
 using sqlexport.Properties;
 
 namespace SqlExport
@@ -123,35 +123,53 @@ namespace SqlExport
 
         static void WriteSchemaInfo(CommandArgument ca, StreamWriter sw)
         {
+            var manuallyObjects = new List<ManuallyOrderObject>();
+
             Console.WriteLine("正在创建数据库结构脚本...");
             var conn = new ServerConnection(ca.Server, ca.UserName, ca.Password);
             var svr = new Server(conn);
             var db = svr.Databases[ca.DataBase];
 
+            WriteTables(manuallyObjects, ca.ManuallyOrder, sw, db.Tables);
+
+            WriteViews(manuallyObjects, ca.ManuallyOrder, sw, db.Views);
+
+            WriteStoredProcedures(manuallyObjects, ca.ManuallyOrder, sw, db.StoredProcedures);
+
+            WriteStoredUserDefinedFunctions(manuallyObjects, ca.ManuallyOrder, sw, db.UserDefinedFunctions);
+
+            WriteManuallyOrderObject(manuallyObjects, sw);
+        }
+
+        static void WriteTables(List<ManuallyOrderObject> manuallyObjects, string[] manuallyOrders, StreamWriter sw, TableCollection tables)
+        {
             Console.WriteLine("正在生成表结构...");
-            foreach (Table tb in db.Tables)
+            foreach (Table tb in tables)
             {
                 if (tb.IsSystemObject)
                     continue;
+
+                var tempScript = new StringBuilder();
+
                 Console.WriteLine("正在生成表：" + tb.Name);
-                sw.WriteLine("PRINT '正在生成表：" + tb.Name + "'");
-                sw.WriteLine("GO");
+                tempScript.AppendLine("PRINT '正在生成表：" + tb.Name + "'");
+                tempScript.AppendLine("GO");
                 var scripts = tb.Script(new ScriptingOptions()
                 {
                     DriDefaults = true
                 });
                 foreach (var a in scripts)
                 {
-                    sw.WriteLine(a);
-                    sw.WriteLine("GO");
+                    tempScript.AppendLine(a);
+                    tempScript.AppendLine("GO");
                 }
 
                 foreach (Index index in tb.Indexes)
                 {
                     foreach (var str in index.Script())
                     {
-                        sw.WriteLine(str);
-                        sw.WriteLine("GO");
+                        tempScript.AppendLine(str);
+                        tempScript.AppendLine("GO");
                     }
                 }
 
@@ -159,8 +177,8 @@ namespace SqlExport
                 {
                     foreach (var str in fk.Script())
                     {
-                        sw.WriteLine(str);
-                        sw.WriteLine("GO");
+                        tempScript.AppendLine(str);
+                        tempScript.AppendLine("GO");
                     }
                 }
 
@@ -168,8 +186,8 @@ namespace SqlExport
                 {
                     foreach (var str in ep.Script())
                     {
-                        sw.WriteLine(str);
-                        sw.WriteLine("GO");
+                        tempScript.AppendLine(str);
+                        tempScript.AppendLine("GO");
                     }
                 }
 
@@ -179,72 +197,127 @@ namespace SqlExport
                     {
                         foreach (var ext in ep.Script())
                         {
-                            sw.WriteLine(ext);
-                            sw.WriteLine("GO");
+                            tempScript.AppendLine(ext);
+                            tempScript.AppendLine("GO");
                         }
                     }
                 }
 
+                TryWriteObject(tb.Name, manuallyOrders, manuallyObjects, sw, tempScript.ToString());
+
                 tableCount++;
             }
             Console.WriteLine("表导出完成，共{0}个", tableCount);
+        }
 
+        static void WriteViews(List<ManuallyOrderObject> manuallyObjects, string[] manuallyOrders, StreamWriter sw, ViewCollection views)
+        {
             Console.WriteLine("正在生成视图...");
-            foreach (View tb in db.Views)
+            foreach (View view in views)
             {
-                if (tb.IsSystemObject)
+                if (view.IsSystemObject)
                     continue;
-                Console.WriteLine("正在生成视图：" + tb.Name);
-                sw.WriteLine("PRINT '正在生成视图：" + tb.Name + "'");
-                sw.WriteLine("GO");
-                var scripts = tb.Script();
+                Console.WriteLine("正在生成视图：" + view.Name);
+
+                var tempScript = new StringBuilder();
+
+                tempScript.AppendLine("PRINT '正在生成视图：" + view.Name + "'");
+                tempScript.AppendLine("GO");
+                var scripts = view.Script();
                 foreach (var a in scripts)
                 {
-                    sw.WriteLine(a);
-                    sw.WriteLine("GO");
+                    tempScript.AppendLine(a);
+                    tempScript.AppendLine("GO");
                 }
+
+                TryWriteObject(view.Name, manuallyOrders, manuallyObjects, sw, tempScript.ToString());
 
                 viewCount++;
             }
             Console.WriteLine("视图导出完成，共{0}个", viewCount);
+        }
 
+        static void WriteStoredProcedures(List<ManuallyOrderObject> manuallyObjects, string[] manuallyOrders, StreamWriter sw,
+            StoredProcedureCollection storedProcedures)
+        {
             Console.WriteLine("正在生成存储过程...");
-            foreach (StoredProcedure tb in db.StoredProcedures)
+            foreach (StoredProcedure storedProcedure in storedProcedures)
             {
-                if (tb.IsSystemObject)
+                if (storedProcedure.IsSystemObject)
                     continue;
-                Console.WriteLine("正在生成存储过程：" + tb.Name);
-                sw.WriteLine("PRINT '正在生成存储过程：" + tb.Name + "'");
-                sw.WriteLine("GO");
-                var scripts = tb.Script();
+
+                Console.WriteLine("正在生成存储过程：" + storedProcedure.Name);
+
+                var tempScript = new StringBuilder();
+                tempScript.AppendLine("PRINT '正在生成存储过程：" + storedProcedure.Name + "'");
+                tempScript.AppendLine("GO");
+
+                var scripts = storedProcedure.Script();
                 foreach (var a in scripts)
                 {
-                    sw.WriteLine(a);
-                    sw.WriteLine("GO");
+                    tempScript.AppendLine(a);
+                    tempScript.AppendLine("GO");
                 }
+
+                TryWriteObject(storedProcedure.Name, manuallyOrders, manuallyObjects, sw, tempScript.ToString());
 
                 procCount++;
             }
             Console.WriteLine("存储过程导出完成，共{0}个", procCount);
+        }
 
+        static void WriteStoredUserDefinedFunctions(List<ManuallyOrderObject> manuallyObjects, string[] manuallyOrders, StreamWriter sw,
+            UserDefinedFunctionCollection userDefinedFunctions)
+        {
             Console.WriteLine("正在生成自定义函数...");
-            foreach (UserDefinedFunction tb in db.UserDefinedFunctions)
+            foreach (UserDefinedFunction userDefinedFunction in userDefinedFunctions)
             {
-                if (tb.IsSystemObject)
+                if (userDefinedFunction.IsSystemObject)
                     continue;
-                Console.WriteLine("正在生成用户函数：" + tb.Name);
-                sw.WriteLine("PRINT '正在生成用户函数：" + tb.Name + "'");
-                sw.WriteLine("GO");
-                var scripts = tb.Script();
+                Console.WriteLine("正在生成用户函数：" + userDefinedFunction.Name);
+
+                var tempScript = new StringBuilder();
+
+                tempScript.AppendLine("PRINT '正在生成用户函数：" + userDefinedFunction.Name + "'");
+                tempScript.AppendLine("GO");
+                var scripts = userDefinedFunction.Script();
                 foreach (var a in scripts)
                 {
-                    sw.WriteLine(a);
-                    sw.WriteLine("GO");
+                    tempScript.AppendLine(a);
+                    tempScript.AppendLine("GO");
                 }
+
+                TryWriteObject(userDefinedFunction.Name, manuallyOrders, manuallyObjects, sw, tempScript.ToString());
 
                 funcCount++;
             }
             Console.WriteLine("自定义函数导出完成，共{0}个", funcCount);
+        }
+
+        static void TryWriteObject(string name, string[] manuallyOrderConfig, List<ManuallyOrderObject> manuallyObjects, StreamWriter sw, string script)
+        {
+            var manuallyWriteIndex = manuallyOrderConfig.IndexOf(name);
+            if (manuallyWriteIndex == -1)
+            {
+                sw.Write(script);
+            }
+            else
+            {
+                Console.WriteLine($"对象{name}被手动控制写入顺序，当前已被忽略");
+                manuallyObjects.Add(new ManuallyOrderObject(name, manuallyWriteIndex, script));
+            }
+        }
+
+        static void WriteManuallyOrderObject(List<ManuallyOrderObject> manuallyObjects, StreamWriter sw)
+        {
+            if (manuallyObjects.Count <= 0) return;
+            Console.WriteLine($"正在写入手动顺序控制对象，共计{manuallyObjects.Count}个");
+            var ordered = manuallyObjects.OrderBy(a => a.Order).ToArray();
+            foreach (var obj in ordered)
+            {
+                Console.WriteLine($"正在写入手动控制对象：{obj.Name}");
+                sw.Write(obj.Script);
+            }
         }
 
         static void CheckAgrument(string arg, string message)
